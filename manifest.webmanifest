@@ -1,0 +1,13 @@
+{
+  "id": "./",
+  "name": "إدارة المخازن",
+  "short_name": "المخازن",
+  "description": "تطبيق إدارة المخازن والعمل المحلي دون اتصال",
+  "lang": "ar",
+  "dir": "rtl",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f6f8",
+  "theme_color": "#1565c0"
+}
