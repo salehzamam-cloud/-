@@ -123,7 +123,47 @@ input,select,textarea{min-height:42px}
 /* ---------- البيانات ---------- */
 let DB={whs:[],items:[],moves:[],orders:[],kits:[],sups:[],docs:[],seq:1,oseq:1},MIG=false;
 const hp=s=>{let h1=0xdeadbeef,h2=0x41c6ce57;s='wh|'+s;for(let i=0,c;i<s.length;i++){c=s.charCodeAt(i);h1=Math.imul(h1^c,2654435761);h2=Math.imul(h2^c,1597334677)}h1=Math.imul(h1^(h1>>>16),2246822507)^Math.imul(h2^(h2>>>13),3266489909);h2=Math.imul(h2^(h2>>>16),2246822507)^Math.imul(h1^(h1>>>13),3266489909);return (4294967296*(2097151&h2)+(h1>>>0)).toString(36)};
-const save=()=>{try{localStorage.setItem('wh1',JSON.stringify(DB))}catch(e){alert('تعذر حفظ البيانات في المتصفح')}};
+/* حفظ محلي أساسي مع نسخة مرآتية في IndexedDB */
+let warehouseIDB=null;
+function openWarehouseIDB(){
+ return new Promise((resolve,reject)=>{
+  if(!('indexedDB' in window)) return reject(new Error('IndexedDB غير مدعوم'));
+  const request=indexedDB.open('warehouse_app_db',1);
+  request.onupgradeneeded=()=>{
+   const db=request.result;
+   if(!db.objectStoreNames.contains('snapshots'))
+    db.createObjectStore('snapshots',{keyPath:'id'});
+  };
+  request.onsuccess=()=>{warehouseIDB=request.result;resolve(warehouseIDB)};
+  request.onerror=()=>reject(request.error||new Error('تعذر فتح قاعدة البيانات'));
+ });
+}
+async function mirrorWarehouseToIDB(){
+ try{
+  const db=warehouseIDB||await openWarehouseIDB();
+  await new Promise((resolve,reject)=>{
+   const tx=db.transaction('snapshots','readwrite');
+   tx.objectStore('snapshots').put({
+    id:'current', data:JSON.stringify(DB), updatedAt:Date.now(), schema:1
+   });
+   tx.oncomplete=resolve;
+   tx.onerror=()=>reject(tx.error||new Error('فشل حفظ نسخة IndexedDB'));
+   tx.onabort=()=>reject(tx.error||new Error('أُلغي حفظ نسخة IndexedDB'));
+  });
+  const status=document.getElementById('netStatus');
+  if(status) status.title='تم تحديث النسخة المحلية الإضافية';
+ }catch(error){
+  console.warn('تعذر تحديث نسخة IndexedDB، والحفظ الأساسي ما زال يعمل:',error);
+  const status=document.getElementById('netStatus');
+  if(status) status.title='الحفظ الأساسي يعمل؛ تعذر تحديث النسخة الإضافية';
+ }
+}
+const save=()=>{
+ try{
+  localStorage.setItem('wh1',JSON.stringify(DB));
+  mirrorWarehouseToIDB();
+ }catch(e){alert('تعذر حفظ البيانات في المتصفح')}
+};
 function migrate(){
  if(!DB.kits)DB.kits=[];
  if(!DB.sups)DB.sups=[];
@@ -141,6 +181,22 @@ function migrate(){
 }
 try{const s=localStorage.getItem('wh1');if(s)DB={...DB,...JSON.parse(s)}}catch(e){}
 migrate();
+/* تهيئة IndexedDB ونسخ البيانات الحالية لأول مرة فقط.
+   لا نستبدل نسخة موجودة ولا نحذف localStorage أثناء الترقية. */
+(async function initializeWarehouseIDB(){
+ try{
+  const db=await openWarehouseIDB();
+  const current=await new Promise((resolve,reject)=>{
+   const tx=db.transaction('snapshots','readonly');
+   const request=tx.objectStore('snapshots').get('current');
+   request.onsuccess=()=>resolve(request.result||null);
+   request.onerror=()=>reject(request.error);
+  });
+  if(!current) await mirrorWarehouseToIDB();
+ }catch(error){
+  console.warn('سيستمر التطبيق بالحفظ المحلي الأساسي:',error);
+ }
+})();
 
 /* ---------- أدوات ---------- */
 const $=s=>document.querySelector(s);
