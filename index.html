@@ -125,7 +125,7 @@ input,select,textarea{min-height:42px}
 let DB={whs:[],items:[],moves:[],orders:[],kits:[],sups:[],docs:[],seq:1,oseq:1},MIG=false;
 const hp=s=>{let h1=0xdeadbeef,h2=0x41c6ce57;s='wh|'+s;for(let i=0,c;i<s.length;i++){c=s.charCodeAt(i);h1=Math.imul(h1^c,2654435761);h2=Math.imul(h2^c,1597334677)}h1=Math.imul(h1^(h1>>>16),2246822507)^Math.imul(h2^(h2>>>13),3266489909);h2=Math.imul(h2^(h2>>>16),2246822507)^Math.imul(h1^(h1>>>13),3266489909);return (4294967296*(2097151&h2)+(h1>>>0)).toString(36)};
 /* Google Drive sync */
-const GOOGLE_CLIENT_ID='892843180250-vbopf12h1ur00jeukqlegudlnk2e2ad7.apps.googleusercontent.com';
+const GOOGLE_CLIENT_ID='110712582134-6lfmufbtf7tfi8himmhgobagsp54i49l.apps.googleusercontent.com';
 const DRIVE_FILE_NAME='warehouse-app-data.json';
 let driveToken='',driveTokenExpiry=0,driveAutoEnabled=false,driveTimer=null,driveBusy=false;
 function driveStatus(msg){const e=$('#driveStatus');if(e)e.textContent=msg}
@@ -1115,4 +1115,4 @@ render();notifyMig();
 </script>
 
 </body>
- </html>
+</html>
