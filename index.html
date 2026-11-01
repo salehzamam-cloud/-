@@ -119,51 +119,71 @@ input,select,textarea{min-height:42px}
 <dialog id="dlg"></dialog>
 <button id="waAgentBtn" class="b" style="position:fixed;right:12px;bottom:20px;z-index:15;border-radius:24px;box-shadow:0 2px 8px #0005" onclick="waAgentOpen()">🤖 مساعد إشعارات واتساب</button>
 <div id="print"></div>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <script>
 /* ---------- البيانات ---------- */
 let DB={whs:[],items:[],moves:[],orders:[],kits:[],sups:[],docs:[],seq:1,oseq:1},MIG=false;
 const hp=s=>{let h1=0xdeadbeef,h2=0x41c6ce57;s='wh|'+s;for(let i=0,c;i<s.length;i++){c=s.charCodeAt(i);h1=Math.imul(h1^c,2654435761);h2=Math.imul(h2^c,1597334677)}h1=Math.imul(h1^(h1>>>16),2246822507)^Math.imul(h2^(h2>>>13),3266489909);h2=Math.imul(h2^(h2>>>16),2246822507)^Math.imul(h1^(h1>>>13),3266489909);return (4294967296*(2097151&h2)+(h1>>>0)).toString(36)};
-/* حفظ محلي أساسي مع نسخة مرآتية في IndexedDB */
-let warehouseIDB=null;
-function openWarehouseIDB(){
- return new Promise((resolve,reject)=>{
-  if(!('indexedDB' in window)) return reject(new Error('IndexedDB غير مدعوم'));
-  const request=indexedDB.open('warehouse_app_db',1);
-  request.onupgradeneeded=()=>{
-   const db=request.result;
-   if(!db.objectStoreNames.contains('snapshots'))
-    db.createObjectStore('snapshots',{keyPath:'id'});
-  };
-  request.onsuccess=()=>{warehouseIDB=request.result;resolve(warehouseIDB)};
-  request.onerror=()=>reject(request.error||new Error('تعذر فتح قاعدة البيانات'));
- });
+/* Google Drive sync */
+const GOOGLE_CLIENT_ID='892843180250-vbopf12h1ur00jeukqlegudlnk2e2ad7.apps.googleusercontent.com';
+const DRIVE_FILE_NAME='warehouse-app-data.json';
+let driveToken='',driveTokenExpiry=0,driveAutoEnabled=false,driveTimer=null,driveBusy=false;
+function driveStatus(msg){const e=$('#driveStatus');if(e)e.textContent=msg}
+function driveReady(){return !!driveToken&&Date.now()<driveTokenExpiry-60000&&navigator.onLine}
+function driveConnect(){
+ if(!navigator.onLine)return alert('اتصل بالإنترنت أولاً.');
+ if(!window.google?.accounts?.oauth2)return alert('خدمة Google لم تجهز بعد. انتظر قليلاً ثم أعد المحاولة.');
+ driveStatus('جارٍ فتح نافذة Google...');
+ const c=google.accounts.oauth2.initTokenClient({client_id:GOOGLE_CLIENT_ID,scope:'https://www.googleapis.com/auth/drive.file',callback:r=>{
+  if(r.error){driveStatus('تعذر التفويض: '+r.error);return}
+  driveToken=r.access_token;driveTokenExpiry=Date.now()+(Number(r.expires_in)||3600)*1000;
+  driveStatus('تم ربط Google. اختر رفع البيانات أو تحميلها.');
+  $('#driveUploadBtn')?.removeAttribute('disabled');$('#driveDownloadBtn')?.removeAttribute('disabled');
+ }});
+ c.requestAccessToken({prompt:''});
 }
-async function mirrorWarehouseToIDB(){
- try{
-  const db=warehouseIDB||await openWarehouseIDB();
-  await new Promise((resolve,reject)=>{
-   const tx=db.transaction('snapshots','readwrite');
-   tx.objectStore('snapshots').put({
-    id:'current', data:JSON.stringify(DB), updatedAt:Date.now(), schema:1
-   });
-   tx.oncomplete=resolve;
-   tx.onerror=()=>reject(tx.error||new Error('فشل حفظ نسخة IndexedDB'));
-   tx.onabort=()=>reject(tx.error||new Error('أُلغي حفظ نسخة IndexedDB'));
-  });
-  const status=document.getElementById('netStatus');
-  if(status) status.title='تم تحديث النسخة المحلية الإضافية';
- }catch(error){
-  console.warn('تعذر تحديث نسخة IndexedDB، والحفظ الأساسي ما زال يعمل:',error);
-  const status=document.getElementById('netStatus');
-  if(status) status.title='الحفظ الأساسي يعمل؛ تعذر تحديث النسخة الإضافية';
- }
+async function driveFindFile(){
+ const q=encodeURIComponent("name='"+DRIVE_FILE_NAME+"' and trashed=false");
+ const r=await fetch('https://www.googleapis.com/drive/v3/files?q='+q+'&spaces=drive&fields=files(id,name,modifiedTime)&pageSize=10',{headers:{Authorization:'Bearer '+driveToken}});
+ if(!r.ok)throw new Error('تعذر البحث في Drive ('+r.status+')');
+ return (await r.json()).files?.[0]||null;
 }
-const save=()=>{
+async function driveWrite(){
+ if(!driveReady())throw new Error('انتهت صلاحية الربط أو لا يوجد اتصال. اربط Google Drive مجدداً.');
+ const old=await driveFindFile(),b='whdrive_'+Date.now(),meta={name:DRIVE_FILE_NAME,mimeType:'application/json'};
+ const payload={format:'warehouse-app-backup',version:1,updatedAt:new Date().toISOString(),data:DB};
+ const body='--'+b+'\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'+JSON.stringify(meta)+'\r\n--'+b+'\r\nContent-Type: application/json\r\n\r\n'+JSON.stringify(payload)+'\r\n--'+b+'--';
+ const url=old?'https://www.googleapis.com/upload/drive/v3/files/'+old.id+'?uploadType=multipart':'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+ const r=await fetch(url,{method:old?'PATCH':'POST',headers:{Authorization:'Bearer '+driveToken,'Content-Type':'multipart/related; boundary='+b},body});
+ if(!r.ok)throw new Error('فشل رفع النسخة إلى Drive ('+r.status+')');
+ localStorage.setItem('wh1_drive_last',String(Date.now()));driveStatus('تمت المزامنة إلى Google Drive: '+dt(Date.now()));
+}
+async function driveUploadNow(){
+ if(driveBusy)return;if(!driveReady())return alert('اربط Google Drive أولاً وتأكد من الإنترنت.');
+ driveBusy=true;driveStatus('جارٍ رفع بيانات المخزون...');
+ try{await driveWrite();driveAutoEnabled=true;toast('✅ تمت مزامنة بيانات المخزون مع Google Drive','#2e7d32')}
+ catch(e){driveStatus('تعذر الرفع: '+e.message);alert(e.message)}finally{driveBusy=false}
+}
+async function driveDownloadNow(){
+ if(!driveReady())return alert('اربط Google Drive أولاً وتأكد من الإنترنت.');
+ if(!confirm('سيتم استبدال بيانات هذا الجهاز بالنسخة الموجودة في Google Drive. خذ نسخة احتياطية محلية أولاً. هل تريد المتابعة؟'))return;
  try{
-  localStorage.setItem('wh1',JSON.stringify(DB));
-  mirrorWarehouseToIDB();
- }catch(e){alert('تعذر حفظ البيانات في المتصفح')}
-};
+  driveStatus('جارٍ البحث عن النسخة السحابية...');const f=await driveFindFile();if(!f)return alert('لم توجد نسخة للتطبيق في Google Drive.');
+  const r=await fetch('https://www.googleapis.com/drive/v3/files/'+f.id+'?alt=media',{headers:{Authorization:'Bearer '+driveToken}});
+  if(!r.ok)throw new Error('تعذر تنزيل النسخة ('+r.status+')');
+  const payload=await r.json(),d=payload.data||payload;
+  if(!Array.isArray(d.items)||!Array.isArray(d.moves)||!Array.isArray(d.orders))throw new Error('ملف Drive لا يحتوي على نسخة مخزون صالحة.');
+  DB={whs:[],seq:1,oseq:1,...d};migrate();W=null;driveAutoEnabled=true;render();
+  driveStatus('تم تحميل النسخة السحابية. سجّل الدخول من جديد.');alert('تم تحميل النسخة السحابية. سجّل الدخول إلى المخزن من جديد.');
+ }catch(e){driveStatus('تعذر التحميل: '+e.message);alert(e.message)}
+}
+function driveSchedule(){
+ if(!driveAutoEnabled||!driveReady()||driveBusy)return;clearTimeout(driveTimer);
+ driveTimer=setTimeout(async()=>{if(driveBusy||!driveReady())return;driveBusy=true;driveStatus('جارٍ تحديث النسخة السحابية...');
+  try{await driveWrite()}catch(e){driveStatus('تعذر التحديث التلقائي: '+e.message)}finally{driveBusy=false}
+ },1800);
+}
+const save=()=>{try{localStorage.setItem('wh1',JSON.stringify(DB));driveSchedule()}catch(e){alert('تعذر حفظ البيانات في المتصفح')}};
 function migrate(){
  if(!DB.kits)DB.kits=[];
  if(!DB.sups)DB.sups=[];
@@ -181,22 +201,6 @@ function migrate(){
 }
 try{const s=localStorage.getItem('wh1');if(s)DB={...DB,...JSON.parse(s)}}catch(e){}
 migrate();
-/* تهيئة IndexedDB ونسخ البيانات الحالية لأول مرة فقط.
-   لا نستبدل نسخة موجودة ولا نحذف localStorage أثناء الترقية. */
-(async function initializeWarehouseIDB(){
- try{
-  const db=await openWarehouseIDB();
-  const current=await new Promise((resolve,reject)=>{
-   const tx=db.transaction('snapshots','readonly');
-   const request=tx.objectStore('snapshots').get('current');
-   request.onsuccess=()=>resolve(request.result||null);
-   request.onerror=()=>reject(request.error);
-  });
-  if(!current) await mirrorWarehouseToIDB();
- }catch(error){
-  console.warn('سيستمر التطبيق بالحفظ المحلي الأساسي:',error);
- }
-})();
 
 /* ---------- أدوات ---------- */
 const $=s=>document.querySelector(s);
@@ -339,6 +343,12 @@ function setView(){
  <div class="card"><div class="row"><div><b>اسم المخزن</b><div class="mut">${esc(W.name)}</div></div><button class="b g" onclick="renDlg()">تغيير</button></div></div>
  <div class="card"><div class="row"><div><b>رقم المخزن</b><div class="mut">${esc(W.no)}</div></div><button class="b g" onclick="noDlg()">تغيير</button></div></div>
  <div class="card"><div class="row"><div><b>كلمة المرور</b><div class="mut">${W.pw?'مفعّلة':'بدون كلمة مرور (يفتح بالرقم فقط)'}</div></div><button class="b g" onclick="pwDlg()">${W.pw?'تغيير':'تعيين'}</button></div>${W.pw?'<button class="b r" style="margin-top:8px" onclick="rmPwDlg()">إزالة كلمة المرور</button>':''}</div>
+ <div class="card"><b>☁️ النسخ والمزامنة مع Google Drive</b>
+ <p class="mut" id="driveStatus">لم يتم ربط Google Drive بعد. اربط الحساب، ثم ارفع نسخة أولية لتفعيل المزامنة التلقائية.</p>
+ <button class="b" style="width:100%;margin-top:8px" onclick="driveConnect()">ربط Google Drive</button>
+ <button class="b g" id="driveUploadBtn" style="width:100%;margin-top:8px" onclick="driveUploadNow()" disabled>رفع بيانات المخزون إلى Drive</button>
+ <button class="b g" id="driveDownloadBtn" style="width:100%;margin-top:8px" onclick="driveDownloadNow()" disabled>تحميل بيانات المخزون من Drive</button>
+ <p class="mut">بعد أول رفع ناجح، سيحدّث التطبيق النسخة السحابية تلقائياً عند حفظ أي عملية ما دام الاتصال والتفويض صالحين. قد تحتاج إلى إعادة الربط عند انتهاء صلاحية التفويض.</p></div>
  <div class="card"><b style="color:var(--red)">حذف المخزن</b><div class="mut">يحذف المخزن وكل بياناته نهائياً</div><button class="b r" style="margin-top:8px" onclick="delWhDlg()">حذف المخزن</button></div>`;
 }
 function renDlg(){
@@ -1089,7 +1099,7 @@ render();notifyMig();
     el.classList.toggle('offline', !online);
     el.textContent = online ? 'الاتصال: متاح' : 'الاتصال: غير متاح — العمل المحلي مستمر';
   }
-  window.addEventListener('online', update);
+  window.addEventListener('online', function(){update();driveSchedule()});
   window.addEventListener('offline', update);
   update();
 
@@ -1105,4 +1115,4 @@ render();notifyMig();
 </script>
 
 </body>
-</html>
+ </html>
